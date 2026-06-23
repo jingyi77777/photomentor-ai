@@ -1,0 +1,21 @@
+# Data & model artifacts (too big / private)
+data/ava/
+data/custom/*.jpg
+data/custom/*.jpeg
+data/custom/*.png
+data/custom/consent/
+results/checkpoints/*.pt
+results/*.png
+
+# Python
+__pycache__/
+*.py[cod]
+.ipynb_checkpoints/
+.venv/
+venv/
+*.egg-info/
+
+# OS / editors
+.DS_Store
+.vscode/
+.idea/

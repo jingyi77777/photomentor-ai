@@ -1,0 +1,34 @@
+# Core
+numpy>=1.26,<2.1
+pandas>=2.0
+scipy>=1.11
+scikit-learn>=1.3
+
+# Imaging
+pillow>=10.0
+opencv-python-headless>=4.9
+
+# Deep learning (Colab usually ships a compatible torch; pin loosely)
+torch>=2.2
+torchvision>=0.17
+
+# Explainability
+grad-cam>=1.5.0            # imported as `pytorch_grad_cam`
+
+# No-reference quality baseline (B1)
+piq>=0.8.0                 # robust BRISQUE implementation in pure PyTorch
+
+# Dataset access
+datasets>=2.19             # HuggingFace `Iceclear/AVA`
+huggingface-hub>=0.23
+
+# Plotting / metrics
+matplotlib>=3.8
+seaborn>=0.13
+
+# Demo
+streamlit>=1.36
+
+# Misc
+tqdm>=4.66
+pyyaml>=6.0
