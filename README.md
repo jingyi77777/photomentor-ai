@@ -47,6 +47,8 @@ Reproduce: `python -m src.evaluate` → writes `results/metrics.csv`.
 
 ## Demo
 
+![demo](docs/images/demo.png)
+
 ```bash
 streamlit run app/streamlit_app.py
 ```
