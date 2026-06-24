@@ -47,7 +47,9 @@ Reproduce: `python -m src.evaluate` → writes `results/metrics.csv`.
 
 ## Demo
 
-![demo](docs/images/Demo.png)
+![Demo scores](docs/images/demo_page1.png)
+
+![Grad-CAM heatmaps](docs/images/demo_page2.png)
 
 ```bash
 streamlit run app/streamlit_app.py
