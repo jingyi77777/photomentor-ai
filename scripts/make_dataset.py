@@ -1,57 +1,45 @@
-"""Build most of the custom dataset automatically.
+"""Build a balanced, reproducible custom dataset with auto-generated labels.
 
-Downloads royalty-free photos from Lorem Picsum (picsum.photos, no API key,
-images sourced from Unsplash) and engineers a quality range the model can
-actually learn from:
+Every image gets an INDEPENDENT controlled degradation on three axes, plus a
+measured proxy for the fourth, so all four axes are balanced across 1..5 and a
+random train/val split is balanced on every axis:
 
-  * SHARPNESS  -- controlled by Gaussian blur, so we KNOW the label.
-  * EXPOSURE   -- controlled by brightness shift, so we KNOW the label.
+  sharpness   <- Gaussian blur of known strength   (controlled, exact)
+  exposure    <- brightness shift of known factor   (controlled, exact)
+  composition <- tilt + centre crop of known degree (controlled, exact-ish)
+  background  <- border edge-density on the CLEAN base, quantile-binned 1..5
+                 (measured proxy; computed before any degradation)
 
-These two axes are auto-labelled exactly. COMPOSITION and BACKGROUND cannot be
-synthesised, so they are pre-filled with a placeholder (3) and flagged
-needs_review -- you set those by eye using the generated contact_sheet.png
-(takes ~5 min). Honest note for the write-up: sharpness/exposure labels are
-semi-synthetic by construction; composition/background are hand-labelled.
+The first three labels are exact by construction; background is a heuristic
+proxy and its correlation should be discounted (see docs/labeling_log.md).
+Base photos come from Lorem Picsum (royalty-free, no API key). Images are not
+committed to the repo (.gitignore covers data/custom/*.jpg).
 
-Images are NOT committed to the repo (.gitignore covers data/custom/*.jpg);
-they're used locally only, which keeps the licensing clean.
-
-Run in Colab:   !python scripts/make_dataset.py
+Run:  python scripts/make_dataset.py --n 120
 """
+import argparse
 import io
 import sys
 import time
 from pathlib import Path
 
+import numpy as np
 import requests
 import pandas as pd
 from PIL import Image, ImageEnhance, ImageFilter, ImageDraw
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.append(str(ROOT))
-from src.config import AXES, CUSTOM_DIR
+from src.config import CUSTOM_DIR, SEED
 
 SIZE = 512
-
-# Treatment recipe. Each entry becomes ONE labelled image and needs one base
-# photo. Designed so sharpness and exposure each span the full 1..5 range.
-# (kind, param, sharpness, exposure)
-RECIPE = (
-    [("clean", 0, 5, 5)] * 10 +              # crisp, well-exposed
-    [("blur", 1.2, 4, 5)] * 2 +              # slightly soft
-    [("blur", 2.5, 3, 5)] * 3 +              # noticeably soft
-    [("blur", 5.0, 1, 5)] * 3 +              # very blurry
-    [("expo", 1.4, 5, 4)] * 2 +              # a touch bright
-    [("expo", 1.9, 5, 1)] * 2 +              # blown out
-    [("expo", 0.7, 5, 3)] * 2 +              # a touch dark
-    [("expo", 0.4, 5, 1)] * 2                # very dark
-)
+BLUR = {5: 0.0, 4: 0.8, 3: 1.6, 2: 3.0, 1: 5.0}
+EXPO = {5: 1.0, 4: 1.30, 3: 1.55, 2: 1.85, 1: 2.10}   # brighten (darken = 1/f)
+TILT = {5: 0.0, 4: 4.0, 3: 9.0, 2: 14.0, 1: 20.0}     # degrees
 
 
-def fetch_image_ids(n: int) -> list[int]:
-    """Grab a list of available Picsum image ids."""
-    ids = []
-    page = 1
+def fetch_image_ids(n):
+    ids, page = [], 1
     while len(ids) < n:
         r = requests.get("https://picsum.photos/v2/list",
                          params={"page": page, "limit": 100}, timeout=30)
@@ -59,91 +47,130 @@ def fetch_image_ids(n: int) -> list[int]:
         batch = r.json()
         if not batch:
             break
-        ids += [item["id"] for item in batch]
+        ids += [it["id"] for it in batch]
         page += 1
     return ids[:n]
 
 
-def download(image_id: int) -> Image.Image:
+def download(image_id):
     url = f"https://picsum.photos/id/{image_id}/{SIZE}/{SIZE}.jpg"
     r = requests.get(url, timeout=30)
     r.raise_for_status()
     return Image.open(io.BytesIO(r.content)).convert("RGB")
 
 
-def apply(img: Image.Image, kind: str, param: float) -> Image.Image:
-    if kind == "blur":
-        return img.filter(ImageFilter.GaussianBlur(radius=param))
-    if kind == "expo":
-        return ImageEnhance.Brightness(img).enhance(param)
-    return img
+def border_edge_energy(img):
+    """Proxy for background clutter: gradient energy in the outer frame."""
+    g = np.asarray(img.convert("L"), dtype=np.float32)
+    gx = np.abs(np.diff(g, axis=1))[:-1, :]
+    gy = np.abs(np.diff(g, axis=0))[:, :-1]
+    mag = gx + gy
+    h, w = mag.shape
+    b = int(min(h, w) * 0.22)
+    mask = np.ones_like(mag, dtype=bool)
+    mask[b:h - b, b:w - b] = False
+    return float(mag[mask].mean())
 
 
-def contact_sheet(rows, cols=5, thumb=180):
-    """Numbered grid of every image, for fast hand-labelling."""
-    n = len(rows)
-    r = (n + cols - 1) // cols
-    sheet = Image.new("RGB", (cols * thumb, r * (thumb + 20)), "white")
-    draw = ImageDraw.Draw(sheet)
-    for i, row in enumerate(rows):
-        im = Image.open(CUSTOM_DIR / row["filename"]).resize((thumb, thumb))
-        x, y = (i % cols) * thumb, (i // cols) * (thumb + 20)
-        sheet.paste(im, (x, y))
-        draw.text((x + 4, y + thumb + 4), f'#{i}  {row["filename"]}', fill="black")
-    out = CUSTOM_DIR / "contact_sheet.png"
-    sheet.save(out)
-    return out
+def blur(img, s):
+    return img.filter(ImageFilter.GaussianBlur(BLUR[s])) if BLUR[s] else img
 
 
-def main():
-    print(f"[1/4] Fetching image ids from Picsum ...")
-    ids = fetch_image_ids(len(RECIPE))
+def expose(img, s, dark):
+    f = EXPO[s]
+    if dark and s != 5:
+        f = 1.0 / f
+    return ImageEnhance.Brightness(img).enhance(f)
 
-    print(f"[2/4] Downloading + degrading {len(RECIPE)} images ...")
-    rows = []
-    for i, ((kind, param, sharp, expo), img_id) in enumerate(zip(RECIPE, ids)):
+
+def tilt(img, s):
+    a = TILT[s]
+    if not a:
+        return img
+    rot = img.rotate(a, resample=Image.BICUBIC, expand=False)
+    w, h = img.size
+    cw, ch = int(w * 0.8), int(h * 0.8)
+    l, t = (w - cw) // 2, (h - ch) // 2
+    return rot.crop((l, t, l + cw, t + ch)).resize((w, h))
+
+
+def balanced_targets(n, seed):
+    """Return a length-n array with scores 1..5 as evenly distributed as
+    possible, then shuffled. Independent per axis via different seeds."""
+    arr = np.tile(np.arange(1, 6), int(np.ceil(n / 5)))[:n]
+    rng = np.random.default_rng(seed)
+    rng.shuffle(arr)
+    return arr
+
+
+def main(n):
+    rng = np.random.default_rng(SEED)
+    print(f"[1/4] Fetching {n} image ids from Picsum ...")
+    ids = fetch_image_ids(n)
+
+    # Independent, balanced targets so every axis spans 1..5 evenly.
+    sharp_t = balanced_targets(len(ids), SEED + 1)
+    expo_t = balanced_targets(len(ids), SEED + 2)
+    comp_t = balanced_targets(len(ids), SEED + 3)
+
+    print(f"[2/4] Downloading + degrading {len(ids)} images ...")
+    recs = []
+    for i, img_id in enumerate(ids):
+        base = None
         for attempt in range(3):
             try:
                 base = download(img_id)
                 break
             except Exception as e:
                 if attempt == 2:
-                    print(f"   skip id {img_id}: {e}")
-                    base = None
+                    print(f"   skip {img_id}: {e}")
                 time.sleep(1)
         if base is None:
             continue
-        out = apply(base, kind, param)
+
+        raw_bg = border_edge_energy(base)            # on the CLEAN base
+        img = tilt(base, int(comp_t[i]))
+        img = blur(img, int(sharp_t[i]))
+        img = expose(img, int(expo_t[i]), dark=bool(rng.random() < 0.5))
+
         fname = f"img_{i:03d}.jpg"
-        out.save(CUSTOM_DIR / fname, quality=92)
-        rows.append({
-            "filename": fname,
-            "composition": 3,            # placeholder -> hand-label
-            "exposure": expo,            # auto
-            "sharpness": sharp,          # auto
-            "background": 3,             # placeholder -> hand-label
-            "source": f"picsum/{img_id}",
-            "degradation": f"{kind}:{param}",
-            "needs_review": "composition,background",
-        })
-        print(f"   {fname}  {kind}({param})  sharp={sharp} expo={expo}")
+        img.save(CUSTOM_DIR / fname, quality=92)
+        recs.append([fname, int(comp_t[i]), int(expo_t[i]),
+                     int(sharp_t[i]), raw_bg])
 
-    df = pd.DataFrame(rows)
+    df = pd.DataFrame(recs, columns=["filename", "composition", "exposure",
+                                     "sharpness", "_bg_raw"])
+    ranks = df["_bg_raw"].rank(method="first")
+    df["background"] = (6 - np.ceil(ranks / len(df) * 5)).clip(1, 5).astype(int)
+    df = df.drop(columns="_bg_raw")
+    df["label_source"] = ("sharpness,exposure,composition=controlled;"
+                          "background=edge-density proxy")
+    df = df[["filename", "composition", "exposure", "sharpness",
+             "background", "label_source"]]
     df.to_csv(CUSTOM_DIR / "labels.csv", index=False)
-    print(f"[3/4] Wrote {len(df)} rows -> {CUSTOM_DIR/'labels.csv'}")
+    print(f"[3/4] Wrote {len(df)} rows -> {CUSTOM_DIR / 'labels.csv'}")
 
-    sheet = contact_sheet(rows)
-    print(f"[4/4] Contact sheet -> {sheet}")
+    sample = df.head(25).to_dict("records")
+    cols, thumb = 5, 160
+    rws = (len(sample) + cols - 1) // cols
+    sheet = Image.new("RGB", (cols * thumb, rws * (thumb + 18)), "white")
+    d = ImageDraw.Draw(sheet)
+    for j, row in enumerate(sample):
+        im = Image.open(CUSTOM_DIR / row["filename"]).resize((thumb, thumb))
+        x, y = (j % cols) * thumb, (j // cols) * (thumb + 18)
+        sheet.paste(im, (x, y))
+        d.text((x + 3, y + thumb + 3),
+               f'c{row["composition"]}e{row["exposure"]}'
+               f's{row["sharpness"]}b{row["background"]}', fill="black")
+    sheet.save(CUSTOM_DIR / "contact_sheet.png")
+    print(f"[4/4] Sample contact sheet -> {CUSTOM_DIR / 'contact_sheet.png'}")
 
-    print("\nDONE. Sharpness + exposure are labelled. Two things left:")
-    print("  1. Open contact_sheet.png and set the composition + background")
-    print("     columns in labels.csv (1=poor .. 5=great). Spread the scores")
-    print("     -- include some 1s and 2s, or those axes won't train.")
-    print("  2. Then:  !python -m src.train --model both")
-    print("\nSharpness/exposure spread:")
-    print(df.groupby('sharpness').size().to_string())
-    print(df.groupby('exposure').size().to_string())
+    print("\nPer-axis score spread (should be ~even across 1..5):")
+    for ax in ["composition", "exposure", "sharpness", "background"]:
+        print(f"  {ax}: {dict(df[ax].value_counts().sort_index())}")
 
 
 if __name__ == "__main__":
-    main()
+    p = argparse.ArgumentParser()
+    p.add_argument("--n", type=int, default=120)
+    main(p.parse_args().n)
