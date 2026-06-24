@@ -47,17 +47,21 @@ class _ScaledSigmoid(nn.Module):
 
 
 class ResNetLinear(nn.Module):
-    """B2: frozen backbone + single linear head."""
+    """B2: frozen backbone + a single linear layer regressing all 4 axes.
 
-    def __init__(self, score_range=(1.0, 10.0)):
+    The simplest possible transfer-learning head: one Linear(2048 -> 4).
+    Contrasts with M1's deeper per-axis heads.
+    """
+
+    def __init__(self, n_outputs: int = len(AXES), score_range=AXIS_SCALE):
         super().__init__()
         self.backbone, feat = _backbone(trainable_layer4=False)
-        self.head = nn.Linear(feat, 1)
+        self.head = nn.Linear(feat, n_outputs)
         self.squash = _ScaledSigmoid(*score_range)
 
     def forward(self, x):
         f = self.backbone(x)
-        return self.squash(self.head(f))      # [B, 1]
+        return self.squash(self.head(f))      # [B, 4]
 
 
 class ResNetMultiHead(nn.Module):
