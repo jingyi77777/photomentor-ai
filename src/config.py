@@ -46,7 +46,7 @@ AVA_EPOCHS = 8
 AVA_LR = 1e-3                                # only the head is trained
 
 # Custom fine-tuning (predict 4 axes 1..5)
-FINETUNE_EPOCHS = 30
+FINETUNE_EPOCHS = 12        # early stop: more epochs overfit the small set
 FINETUNE_LR = 5e-4
 VAL_FRACTION = 0.2
 
