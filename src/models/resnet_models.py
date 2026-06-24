@@ -9,8 +9,7 @@ M1 -- ResNetMultiHead: shared backbone + four small regression heads
        1-week MVP) or partially unfrozen (layer4) if data and time allow.
 
 Outputs are squashed to the [1, 5] range with a scaled sigmoid so predictions
-are always valid scores. For AVA pretraining (1..10) we expose a `head_10`
-linear layer used only during the pretraining phase.
+are always valid scores.
 """
 from __future__ import annotations
 import torch
@@ -79,10 +78,6 @@ class ResNetMultiHead(nn.Module):
             for axis in AXES
         })
         self.squash = _ScaledSigmoid(*AXIS_SCALE)
-        # Pretraining head: predicts a single AVA mean score (1..10).
-        self.head_10 = nn.Sequential(nn.Linear(feat, 256), nn.ReLU(True),
-                                     nn.Linear(256, 1))
-        self.squash_10 = _ScaledSigmoid(1.0, 10.0)
 
     def features(self, x):
         return self.backbone(x)
@@ -92,8 +87,3 @@ class ResNetMultiHead(nn.Module):
         f = self.backbone(x)
         outs = [self.squash(self.heads[a](f)) for a in self.axes]
         return torch.cat(outs, dim=1)
-
-    def forward_pretrain(self, x):
-        """Single-score path used during AVA pretraining."""
-        f = self.backbone(x)
-        return self.squash_10(self.head_10(f))   # [B, 1]

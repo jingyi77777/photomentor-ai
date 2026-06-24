@@ -84,7 +84,7 @@ def evaluate_m1():
     dev = _device()
     model = ResNetMultiHead().to(dev)
     ckpt = CHECKPOINT_DIR / "m1_multihead.pt"
-    model.load_state_dict(torch.load(ckpt, map_location=dev))
+    model.load_state_dict(torch.load(ckpt, map_location=dev), strict=False)
 
     val = held_out_split()
     loader = DataLoader(val, BATCH_SIZE, shuffle=False)

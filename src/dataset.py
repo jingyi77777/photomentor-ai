@@ -1,8 +1,6 @@
-"""PyTorch Datasets and image transforms.
+"""PyTorch Dataset and image transforms.
 
-Two datasets:
-  * AVADataset      -> (image, mean_score in 1..10)   for pretraining a head
-  * CustomAxisDataset -> (image, [comp, expo, sharp, bg] in 1..5) for fine-tune
+CustomAxisDataset -> (image, [comp, expo, sharp, bg] in 1..5).
 
 The custom set expects a CSV `labels.csv` in data/custom/ with columns:
     filename, composition, exposure, sharpness, background
@@ -17,9 +15,7 @@ import torch
 from torch.utils.data import Dataset
 from torchvision import transforms
 
-from .config import (
-    AXES, IMG_SIZE, IMAGENET_MEAN, IMAGENET_STD, AVA_DIR, CUSTOM_DIR,
-)
+from .config import AXES, IMG_SIZE, IMAGENET_MEAN, IMAGENET_STD, CUSTOM_DIR
 
 
 def build_transforms(train: bool) -> transforms.Compose:
@@ -39,33 +35,14 @@ def build_transforms(train: bool) -> transforms.Compose:
     ])
 
 
-class AVADataset(Dataset):
-    """AVA images with a single mean aesthetic score target (1..10)."""
-
-    def __init__(self, manifest_csv: Path | None = None, train: bool = True):
-        manifest_csv = manifest_csv or (AVA_DIR / "ava_subsample.csv")
-        self.df = pd.read_csv(manifest_csv).reset_index(drop=True)
-        self.img_dir = AVA_DIR / "images"
-        self.tf = build_transforms(train)
-
-    def __len__(self) -> int:
-        return len(self.df)
-
-    def __getitem__(self, i: int):
-        row = self.df.iloc[i]
-        img = Image.open(self.img_dir / row["filename"]).convert("RGB")
-        x = self.tf(img)
-        y = torch.tensor([row["mean_score"]], dtype=torch.float32)
-        return x, y
-
-
 class CustomAxisDataset(Dataset):
-    """Beginner photos labelled on the four 1..5 axes."""
+    """Photos labelled on the four 1..5 axes."""
 
-    def __init__(self, labels_csv: Path | None = None, train: bool = True):
+    def __init__(self, labels_csv: Path | None = None,
+                 img_dir: Path | None = None, train: bool = True):
         labels_csv = labels_csv or (CUSTOM_DIR / "labels.csv")
         self.df = pd.read_csv(labels_csv).reset_index(drop=True)
-        self.img_dir = CUSTOM_DIR
+        self.img_dir = img_dir or CUSTOM_DIR
         self.tf = build_transforms(train)
 
     def __len__(self) -> int:

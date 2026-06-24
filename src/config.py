@@ -11,12 +11,11 @@ from pathlib import Path
 # ----------------------------------------------------------------------------
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DATA_ROOT = PROJECT_ROOT / "data"
-AVA_DIR = DATA_ROOT / "ava"                 # stratified 5k subsample lands here
-CUSTOM_DIR = DATA_ROOT / "custom"           # 4-axis labelled beginner photos
+CUSTOM_DIR = DATA_ROOT / "custom"           # 4-axis labelled photos
 RESULTS_DIR = PROJECT_ROOT / "results"
 CHECKPOINT_DIR = RESULTS_DIR / "checkpoints"
 
-for _d in (AVA_DIR, CUSTOM_DIR, RESULTS_DIR, CHECKPOINT_DIR):
+for _d in (CUSTOM_DIR, RESULTS_DIR, CHECKPOINT_DIR):
     _d.mkdir(parents=True, exist_ok=True)
 
 # ----------------------------------------------------------------------------
@@ -39,11 +38,6 @@ SEED = 42
 BATCH_SIZE = 32
 NUM_WORKERS = 2
 DEVICE = "cuda"                              # falls back to cpu in code if absent
-
-# AVA pretraining (predict mean aesthetic score 1..10)
-AVA_SUBSAMPLE_N = 5000
-AVA_EPOCHS = 8
-AVA_LR = 1e-3                                # only the head is trained
 
 # Custom fine-tuning (predict 4 axes 1..5)
 FINETUNE_EPOCHS = 12        # early stop: more epochs overfit the small set

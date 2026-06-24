@@ -43,7 +43,7 @@ class PhotoMentor:
         self.device = device or (DEVICE if torch.cuda.is_available() else "cpu")
         self.model = ResNetMultiHead().to(self.device).eval()
         state = torch.load(checkpoint, map_location=self.device)
-        self.model.load_state_dict(state)
+        self.model.load_state_dict(state, strict=False)
         # Grad-CAM needs gradients to reach the target conv layer. The backbone
         # was frozen for training; re-enable grad here. This object is inference
         # only, so flipping requires_grad has no training side-effects and is
