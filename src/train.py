@@ -1,11 +1,15 @@
-"""Training: train B2 and M1 directly on the custom 4-axis dataset.
+"""Training: train B2 and M1 on the custom 4-axis dataset.
 
 AVA large-scale pretraining was descoped (the available AVA mirror ships
 images only, no score labels). Both models start from an ImageNet-pretrained
 ResNet-50 backbone and learn the four 1..5 axes from the custom labelled set.
 
   B2 (ResNetLinear)    -- frozen backbone + one linear layer -> 4 axes.
-  M1 (ResNetMultiHead) -- frozen backbone + a deeper head per axis -> 4 axes.
+  M1 (ResNetMultiHead) -- backbone with the LAST conv block (layer4) unfrozen,
+                          plus a deeper head per axis -> 4 axes. The unfrozen
+                          block uses a 5x lower learning rate so the pretrained
+                          features are adapted, not destroyed; weight decay
+                          regularises against overfitting on a small set.
 
 Run in Colab:
     python -m src.train --model both     # trains B2 and M1
@@ -28,6 +32,9 @@ from .config import (
 from .dataset import CustomAxisDataset
 from .models.resnet_models import ResNetLinear, ResNetMultiHead
 
+WEIGHT_DECAY = 1e-4
+BACKBONE_LR_SCALE = 0.2          # unfrozen backbone learns 5x slower than heads
+
 
 def _device() -> str:
     return DEVICE if torch.cuda.is_available() else "cpu"
@@ -47,6 +54,19 @@ def _loaders(dataset, val_fraction):
             DataLoader(va, BATCH_SIZE, shuffle=False, num_workers=NUM_WORKERS))
 
 
+def _make_optimizer(model, lr):
+    """Two param groups: heads at `lr`, any trainable backbone at a lower lr."""
+    backbone, heads = [], []
+    for name, p in model.named_parameters():
+        if not p.requires_grad:
+            continue
+        (backbone if name.startswith("backbone.") else heads).append(p)
+    groups = [{"params": heads, "lr": lr}]
+    if backbone:
+        groups.append({"params": backbone, "lr": lr * BACKBONE_LR_SCALE})
+    return torch.optim.Adam(groups, weight_decay=WEIGHT_DECAY)
+
+
 def _run_epoch(model, loader, loss_fn, dev, opt=None):
     train = opt is not None
     model.train(train)
@@ -63,8 +83,7 @@ def _run_epoch(model, loader, loss_fn, dev, opt=None):
 
 def _train_one(model, name, tr, va, dev, epochs=FINETUNE_EPOCHS, lr=FINETUNE_LR):
     loss_fn = nn.MSELoss()
-    params = [p for p in model.parameters() if p.requires_grad]
-    opt = torch.optim.Adam(params, lr=lr)
+    opt = _make_optimizer(model, lr)
     best, best_path = float("inf"), CHECKPOINT_DIR / f"{name}.pt"
     print(f"=== Training {name} on custom 4-axis data ===")
     for ep in range(epochs):
@@ -83,13 +102,16 @@ def main(which: str):
     ds = CustomAxisDataset(train=True)
     if len(ds) < 8:
         print(f"WARNING: only {len(ds)} labelled photos found. Add more to "
-              f"data/custom/ (aim for 30-50 for a usable MVP).")
+              f"data/custom/ (aim for 200-300 for stable held-out metrics).")
     tr, va = _loaders(ds, VAL_FRACTION)
 
     if which in ("both", "b2"):
+        # B2 keeps the backbone fully frozen (the simple baseline).
         _train_one(ResNetLinear().to(dev), "b2_resnet_linear", tr, va, dev)
     if which in ("both", "m1"):
-        _train_one(ResNetMultiHead().to(dev), "m1_multihead", tr, va, dev)
+        # M1 unfreezes the last conv block for more capacity.
+        _train_one(ResNetMultiHead(trainable_layer4=True).to(dev),
+                   "m1_multihead", tr, va, dev)
 
 
 if __name__ == "__main__":
