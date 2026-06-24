@@ -44,6 +44,12 @@ class PhotoMentor:
         self.model = ResNetMultiHead().to(self.device).eval()
         state = torch.load(checkpoint, map_location=self.device)
         self.model.load_state_dict(state)
+        # Grad-CAM needs gradients to reach the target conv layer. The backbone
+        # was frozen for training; re-enable grad here. This object is inference
+        # only, so flipping requires_grad has no training side-effects and is
+        # what lets Grad-CAM capture activations' gradients on layer4.
+        for p in self.model.parameters():
+            p.requires_grad_(True)
         self.tf = build_transforms(train=False)
         self.target_layer = self.model.backbone.layer4[-1]
 
