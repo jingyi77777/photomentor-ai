@@ -62,7 +62,7 @@ if file is None:
 
 img = Image.open(file).convert("RGB")
 left, right = st.columns([1, 1])
-left.image(img, caption="Your photo", use_column_width=True)
+left.image(img, caption="Your photo", use_container_width=True)
 
 if mentor is None:
     right.warning(
@@ -85,7 +85,7 @@ if show_xai:
     st.subheader("Where the model is looking (Grad-CAM)")
     cols = st.columns(4)
     for col, axis in zip(cols, AXES):
-        col.image(result["heatmaps"][axis], caption=axis, use_column_width=True)
+        col.image(result["heatmaps"][axis], caption=axis, use_container_width=True)
 
     st.subheader("Suggestions")
     for tip in result["feedback"]:
