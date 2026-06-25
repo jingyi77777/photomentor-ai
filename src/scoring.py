@@ -65,17 +65,45 @@ def _edge_mag(g: np.ndarray) -> np.ndarray:
     return gx + gy
 
 
+def _colour_variety(img: Image.Image) -> float:
+    """Fraction of the 4x4x4 RGB colour cube that the image actually uses.
+    A plain wall/sky uses very few colour bins; a cluttered scene uses many."""
+    arr = np.asarray(img.convert("RGB"))
+    q = (arr // 64).reshape(-1, 3)               # 4 levels per channel -> 64 bins
+    codes = q[:, 0] * 16 + q[:, 1] * 4 + q[:, 2]
+    return len(np.unique(codes)) / 64.0
+
+
 def background_score(img: Image.Image) -> float:
     g = _gray(img)
     mag = _edge_mag(g)
     h, w = mag.shape
+
+    # 1) Border clutter (background is usually in the outer frame).
     b = int(min(h, w) * 0.22)
     border = np.ones_like(mag, dtype=bool)
-    border[b:h - b, b:w - b] = False          # outer frame only
-    edge_frac = float((mag[border] > 0.06).mean())   # busy border = clutter
-    # clean wall/sky ~0.03-0.08 ; cluttered ~0.25-0.45
-    good = (0.32 - edge_frac) / (0.32 - 0.05)
-    return _to_score(good)
+    border[b:h - b, b:w - b] = False
+    border_frac = float((mag[border] > 0.06).mean())
+
+    # 2) Grid busyness: split into a 4x4 grid and count how many cells are
+    #    "busy" (lots of edges). Clutter anywhere -- centre included -- raises
+    #    this, so it catches a messy desk even against a plain border.
+    busy_cells, gh, gw = 0, h // 4, w // 4
+    for i in range(4):
+        for j in range(4):
+            cell = mag[i * gh:(i + 1) * gh, j * gw:(j + 1) * gw]
+            if float((cell > 0.06).mean()) > 0.12:
+                busy_cells += 1
+    busy_frac = busy_cells / 16.0
+
+    # 3) Colour variety: plain backgrounds use few colours, clutter uses many.
+    colour = _colour_variety(img)
+
+    # Combine: each term is 0 (clean) .. ~1 (busy). Border weighted highest.
+    clutter = (0.35 * min(border_frac / 0.30, 1.0)
+               + 0.50 * busy_frac
+               + 0.15 * min(colour / 0.45, 1.0))
+    return _to_score(1.0 - clutter)
 
 
 def composition_score(img: Image.Image) -> float:
