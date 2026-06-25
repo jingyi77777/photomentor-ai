@@ -18,12 +18,38 @@ looking, and **one actionable suggestion** for what to change.
 
 ---
 
-## Results
+## How scoring works (important)
 
-Model **M1** evaluated on the **held-out validation split** (N=120), using the
-exact train/val split from `src/train.py` (no training leakage). All metrics
-report 95% bootstrap confidence intervals. **H2** asks whether per-axis scores
-correlate with labels at Spearman ρ ≥ 0.5.
+The demo scores photos with **deterministic image statistics**
+(`src/scoring.py`), not the learned model. This is a deliberate design choice:
+
+- **Exposure** ← luminance histogram (shadow/highlight clipping + mid-tone mass)
+- **Sharpness** ← variance of the Laplacian (focus / motion blur)
+- **Background** ← edge density in the image border (clutter behind the subject)
+- **Composition** ← where the salient mass sits vs the rule-of-thirds lines
+
+**Why not the CNN?** The models below were trained on *synthetic* degradations
+(programmatic blur, brightness shifts, edge-density proxies). They score well
+on held-out data drawn from that same synthetic distribution, but they fail
+**out-of-distribution on real photos** — e.g. they don't reliably tell good
+light from bad, or a clean background from a busy one, because real lighting
+and clutter don't look like the synthetic training signal. The deterministic
+scorer measures the actual physical property instead, so it behaves correctly
+on ordinary photos. The CNN + Grad-CAM is retained as an explainability layer
+(*where a network attends*), not as the score source.
+
+This is a transparent, classical scorer in the spirit of the B1 baseline — no
+training, no distribution assumptions, fully inspectable.
+
+---
+
+## Model evaluation (synthetic held-out set)
+
+The numbers below characterise the **learned model M1** on the held-out split of
+the synthetic dataset (N=120, no training leakage). They are reported for
+completeness and to document exactly why scoring was moved off the model: the
+model fits the synthetic axes well in-distribution, which is precisely what does
+*not* transfer to real photos.
 
 | Axis | MAE (1–5 scale) | Spearman ρ | 95% CI on ρ | H2 (ρ ≥ 0.5) |
 |------|-----------------|------------|-------------|--------------|
@@ -32,25 +58,14 @@ correlate with labels at Spearman ρ ≥ 0.5.
 | Composition | 0.98 | 0.50 | [0.34, 0.62] | ✗ (0.497) |
 | Exposure    | 1.13 | 0.42 | [0.25, 0.57] | ✗ |
 
-**Every axis shows a statistically discernible positive correlation** — all
-four confidence intervals exclude zero. Sharpness and background pass H2;
-composition falls one thousandth short (ρ = 0.497) and exposure is a clear but
-weaker positive relationship.
-
-> **Honest reading of the numbers.**
-> - These are **held-out** results: `src/evaluate.py` reproduces the training
->   split and scores only the validation portion, so they are not inflated by
->   training leakage. (An earlier, leaked "evaluate on everything" version
->   reported ρ up to 0.94 — discarded.)
-> - **Background** uses a heuristic proxy label (border edge density), so its ρ
->   partly reflects the model re-learning that statistic; discount it relative
->   to the controlled axes.
-> - **Sharpness** (controlled blur) is the strongest genuine result at ρ = 0.84.
-> - **Composition and exposure** are weaker. Training logs show the model still
->   overfits the synthetic set (train MSE ≪ val MSE), so these two are limited
->   by label realism and data size, not by the architecture. The full research
->   plan addresses this with a larger, human-labelled set
->   (`docs/user_study_design.md`).
+> **Honest reading.** These are leakage-free held-out numbers
+> (`src/evaluate.py` reproduces the training split and scores only the
+> validation portion; an earlier leaked "evaluate on everything" version
+> reporting ρ up to 0.94 was discarded). But strong *in-distribution* synthetic
+> scores did **not** mean the model worked on real photos — testing on real
+> images surfaced exactly that gap, which is why the demo now scores with
+> measured image statistics. The full research plan closes the loop with a
+> larger, human-labelled set (`docs/user_study_design.md`).
 
 Reproduce: `python -m src.evaluate` → writes `results/metrics.csv` (committed).
 

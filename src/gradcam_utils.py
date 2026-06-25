@@ -24,6 +24,7 @@ from .config import AXES, IMG_SIZE, IMAGENET_MEAN, IMAGENET_STD, DEVICE
 from .dataset import build_transforms
 from .models.resnet_models import ResNetMultiHead
 from .feedback import generate_feedback
+from .scoring import image_scores
 
 
 class _SingleAxisWrapper(torch.nn.Module):
@@ -68,7 +69,11 @@ class PhotoMentor:
     def analyse(self, img: Image.Image, make_heatmaps: bool = True) -> dict:
         img = img.convert("RGB")
         x = self.tf(img).unsqueeze(0).to(self.device)
-        scores = self._scores(x)
+        # Scores come from deterministic image statistics (see src/scoring.py),
+        # which behave correctly on real photos -- unlike a model trained on
+        # synthetic degradations, which fails out-of-distribution. The CNN below
+        # is kept only to show *where* a network attends (Grad-CAM).
+        scores = image_scores(img)
         result = {"scores": scores,
                   "feedback": generate_feedback(scores, img),
                   "heatmaps": {}}
