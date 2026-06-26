@@ -35,15 +35,23 @@ def _to_score(unit01: float) -> float:
 
 def exposure_score(img: Image.Image) -> float:
     g = _gray(img)
-    dark = float((g < 0.12).mean())          # clipped / crushed shadows
-    bright = float((g > 0.88).mean())         # blown highlights
-    mean_l = float(g.mean())
-    # clipping is the dominant signal: ~18%+ clipped -> fully penalised
-    clip_pen = _clamp((dark + bright) / 0.18)
-    # also penalise an overall too-dark or too-bright average
-    mean_pen = _clamp((abs(mean_l - 0.5) - 0.10) / 0.30)
-    good = 1.0 - (0.7 * clip_pen + 0.3 * mean_pen)
-    return _to_score(good)
+    h, w = g.shape
+    # Exposure is judged mainly on the SUBJECT, which usually sits in the
+    # central region. A dramatic dark background (low-key portrait) shouldn't
+    # drag the score down if the subject itself is well lit. We weight the
+    # central crop most, with the whole frame as a secondary check.
+    centre = g[int(h * 0.25):int(h * 0.75), int(w * 0.32):int(w * 0.68)]
+
+    def _penalties(region):
+        dark = float((region < 0.12).mean())     # crushed shadows
+        bright = float((region > 0.88).mean())    # blown highlights
+        mean_l = float(region.mean())
+        clip_pen = _clamp((dark + bright) / 0.45)
+        mean_pen = _clamp((abs(mean_l - 0.5) - 0.15) / 0.32)
+        return 0.65 * clip_pen + 0.35 * mean_pen
+
+    pen = 0.85 * _penalties(centre) + 0.15 * _penalties(g)
+    return _to_score(1.0 - pen)
 
 
 def sharpness_score(img: Image.Image) -> float:
