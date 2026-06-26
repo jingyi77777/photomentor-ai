@@ -23,9 +23,12 @@ looking, and **one actionable suggestion** for what to change.
 The demo scores photos with **deterministic image statistics**
 (`src/scoring.py`), not the learned model. This is a deliberate design choice:
 
-- **Exposure** ← luminance histogram (shadow/highlight clipping + mid-tone mass)
+- **Exposure** ← luminance histogram (shadow/highlight clipping + mid-tone mass),
+  **weighted toward the central subject** so a deliberately dark background does
+  not drag down a well-lit subject (a low-key portrait stays correctly exposed)
 - **Sharpness** ← variance of the Laplacian (focus / motion blur)
-- **Background** ← edge density in the image border (clutter behind the subject)
+- **Background** ← clutter density over a **4×4 grid** (not just the border) plus
+  colour variety, so an intruding object is caught wherever it sits in the frame
 - **Composition** ← where the salient mass sits vs the rule-of-thirds lines
 
 **Why not the CNN?** The models below were trained on *synthetic* degradations
@@ -40,6 +43,24 @@ on ordinary photos. The CNN + Grad-CAM is retained as an explainability layer
 
 This is a transparent, classical scorer in the spirit of the B1 baseline — no
 training, no distribution assumptions, fully inspectable.
+
+### Where the heuristics are solid vs. approximate
+
+Photo quality is partly subjective, and a pixel-based scorer cannot capture
+artistic intent — a deliberately dark, low-key portrait can be excellent yet
+read as "underexposed" to any brightness measure. The scorer is therefore tuned
+for the **clear, objective cases** rather than fine aesthetic judgement:
+
+| Axis | Reliability | Notes |
+|------|-------------|-------|
+| Sharpness   | **strong**  | Laplacian variance separates focus/blur robustly. |
+| Exposure    | **strong on clear cases** | Central-subject weighting handles low-key portraits; genuine under/over-exposure is detected reliably. Artistic lighting is inherently ambiguous. |
+| Background  | **moderate** | Grid clutter catches busy scenes anywhere in the frame, but without true subject segmentation it can over-score clutter that sits against a plain border. |
+| Composition | **weakest**  | Rule-of-thirds placement of salient mass is a coarse proxy for a judgement that is largely aesthetic. |
+
+The natural next step to strengthen the background and composition axes is a
+proper subject/background segmentation model, which is out of scope for the
+one-week build.
 
 ---
 
